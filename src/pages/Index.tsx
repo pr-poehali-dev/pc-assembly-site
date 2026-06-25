@@ -92,6 +92,15 @@ export default function Index() {
                 toast.error((e as Error).message);
               }
             }}
+            onDeletePost={async (id) => {
+              try {
+                await api.deletePost(id);
+                setPosts(posts.filter((p) => p.id !== id));
+                toast.success('Пост удалён');
+              } catch (e) {
+                toast.error((e as Error).message);
+              }
+            }}
             onBuy={() => requireAuth(() => {})}
           />
         )}

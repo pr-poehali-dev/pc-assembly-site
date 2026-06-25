@@ -121,22 +121,65 @@ function AuthModal({ mode, setMode, onClose, onAuth }: {
   onClose: () => void;
   onAuth: (token: string, u: User) => void;
 }) {
+  const [view, setView] = useState<'auth' | 'reset'>('auth');
   const [name, setName] = useState('');
+  const [login, setLogin] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
 
+  const [resetEmail, setResetEmail] = useState('');
+  const [resetStep, setResetStep] = useState<'request' | 'confirm'>('request');
+  const [resetCode, setResetCode] = useState('');
+  const [resetNewPass, setResetNewPass] = useState('');
+
   const submit = async () => {
-    if (!email || !password || (mode === 'register' && !name)) {
-      toast.error('Заполните все поля');
+    if (mode === 'register' ? (!name || !password) : (!login || !password)) {
+      toast.error('Заполните обязательные поля');
       return;
     }
     setLoading(true);
     try {
       const res = mode === 'register'
         ? await api.register(name, email, password)
-        : await api.login(email, password);
+        : await api.login(login, password);
       onAuth(res.token, res.user);
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const requestReset = async () => {
+    if (!resetEmail) { toast.error('Укажите почту'); return; }
+    setLoading(true);
+    try {
+      const res = await api.resetRequest(resetEmail);
+      setResetStep('confirm');
+      if (res.code) {
+        setResetCode(res.code);
+        toast.success(`Код для сброса: ${res.code}`);
+      }
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const confirmReset = async () => {
+    if (!resetCode || !resetNewPass) { toast.error('Введите код и новый пароль'); return; }
+    setLoading(true);
+    try {
+      await api.resetConfirm(resetEmail, resetCode, resetNewPass);
+      toast.success('Пароль обновлён, теперь войдите');
+      setView('auth');
+      setMode('login');
+      setResetStep('request');
+      setResetEmail('');
+      setResetCode('');
+      setResetNewPass('');
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
@@ -159,46 +202,120 @@ function AuthModal({ mode, setMode, onClose, onAuth }: {
           </button>
         </div>
 
-        <div className="flex gap-2 p-1 bg-secondary rounded-lg">
-          {(['register', 'login'] as const).map((m) => (
-            <button
-              key={m}
-              onClick={() => setMode(m)}
-              className={`flex-1 py-2 rounded-md text-sm font-medium transition-colors ${
-                mode === m ? 'bg-primary text-primary-foreground' : 'text-muted-foreground'
-              }`}
-            >
-              {m === 'register' ? 'Регистрация' : 'Вход'}
-            </button>
-          ))}
-        </div>
-
-        <div className="space-y-3">
-          {mode === 'register' && (
-            <div className="space-y-1.5">
-              <Label>Имя</Label>
-              <Input placeholder="Ваше имя" value={name} onChange={(e) => setName(e.target.value)} />
+        {view === 'auth' ? (
+          <>
+            <div className="flex gap-2 p-1 bg-secondary rounded-lg">
+              {(['register', 'login'] as const).map((m) => (
+                <button
+                  key={m}
+                  onClick={() => setMode(m)}
+                  className={`flex-1 py-2 rounded-md text-sm font-medium transition-colors ${
+                    mode === m ? 'bg-primary text-primary-foreground' : 'text-muted-foreground'
+                  }`}
+                >
+                  {m === 'register' ? 'Регистрация' : 'Вход'}
+                </button>
+              ))}
             </div>
-          )}
-          <div className="space-y-1.5">
-            <Label>Почта</Label>
-            <Input type="email" placeholder="you@mail.com" value={email} onChange={(e) => setEmail(e.target.value)} />
-          </div>
-          <div className="space-y-1.5">
-            <Label>Пароль</Label>
-            <Input
-              type="password"
-              placeholder="••••••••"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && submit()}
-            />
-          </div>
-        </div>
 
-        <Button onClick={submit} className="w-full" disabled={loading}>
-          {loading ? 'Загрузка...' : mode === 'register' ? 'Создать аккаунт' : 'Войти'}
-        </Button>
+            <div className="space-y-3">
+              {mode === 'register' ? (
+                <>
+                  <div className="space-y-1.5">
+                    <Label>Имя</Label>
+                    <Input placeholder="Ваше имя" value={name} onChange={(e) => setName(e.target.value)} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Почта <span className="text-muted-foreground text-xs">(необязательно)</span></Label>
+                    <Input type="email" placeholder="you@mail.com" value={email} onChange={(e) => setEmail(e.target.value)} />
+                  </div>
+                </>
+              ) : (
+                <div className="space-y-1.5">
+                  <Label>Имя или почта</Label>
+                  <Input placeholder="Имя или you@mail.com" value={login} onChange={(e) => setLogin(e.target.value)} />
+                </div>
+              )}
+              <div className="space-y-1.5">
+                <Label>Пароль</Label>
+                <Input
+                  type="password"
+                  placeholder="••••••••"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && submit()}
+                />
+              </div>
+            </div>
+
+            <Button onClick={submit} className="w-full" disabled={loading}>
+              {loading ? 'Загрузка...' : mode === 'register' ? 'Создать аккаунт' : 'Войти'}
+            </Button>
+
+            {mode === 'login' && (
+              <button
+                onClick={() => setView('reset')}
+                className="w-full text-center text-sm text-muted-foreground hover:text-primary transition-colors"
+              >
+                Забыли пароль?
+              </button>
+            )}
+          </>
+        ) : (
+          <>
+            <div className="space-y-1">
+              <h3 className="font-display font-bold text-lg">Восстановление пароля</h3>
+              <p className="text-sm text-muted-foreground">
+                {resetStep === 'request' ? 'Укажите почту от аккаунта' : 'Введите код и новый пароль'}
+              </p>
+            </div>
+
+            {resetStep === 'request' ? (
+              <div className="space-y-3">
+                <div className="space-y-1.5">
+                  <Label>Почта</Label>
+                  <Input
+                    type="email"
+                    placeholder="you@mail.com"
+                    value={resetEmail}
+                    onChange={(e) => setResetEmail(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && requestReset()}
+                  />
+                </div>
+                <Button onClick={requestReset} className="w-full" disabled={loading}>
+                  {loading ? 'Отправка...' : 'Получить код'}
+                </Button>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div className="space-y-1.5">
+                  <Label>Код из 6 цифр</Label>
+                  <Input placeholder="123456" value={resetCode} onChange={(e) => setResetCode(e.target.value)} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Новый пароль</Label>
+                  <Input
+                    type="password"
+                    placeholder="••••••••"
+                    value={resetNewPass}
+                    onChange={(e) => setResetNewPass(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && confirmReset()}
+                  />
+                </div>
+                <Button onClick={confirmReset} className="w-full" disabled={loading}>
+                  {loading ? 'Сохранение...' : 'Сменить пароль'}
+                </Button>
+              </div>
+            )}
+
+            <button
+              onClick={() => { setView('auth'); setResetStep('request'); }}
+              className="w-full text-center text-sm text-muted-foreground hover:text-primary transition-colors"
+            >
+              ← Назад ко входу
+            </button>
+          </>
+        )}
       </Card>
     </div>
   );
