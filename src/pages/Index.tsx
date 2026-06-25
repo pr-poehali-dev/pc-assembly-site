@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -9,58 +9,9 @@ import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import Icon from '@/components/ui/icon';
 import { toast } from 'sonner';
+import { api, getToken, setToken, clearToken, type User, type Post, type Review } from '@/lib/api';
 
 type Tab = 'home' | 'feed' | 'reviews' | 'cabinet' | 'settings';
-
-interface User {
-  uid: number;
-  name: string;
-  email: string;
-  registeredAt: string;
-}
-
-interface Post {
-  id: number;
-  author: string;
-  title: string;
-  description: string;
-  price: string;
-  link: string;
-  image: string;
-}
-
-interface Review {
-  id: number;
-  author: string;
-  text: string;
-  rating: number;
-}
-
-const initialPosts: Post[] = [
-  {
-    id: 1,
-    author: 'NOVA Team',
-    title: 'NOVA Phantom RTX',
-    description: 'Игровой монстр: RTX 4080 Super, Ryzen 7 7800X3D, 32 ГБ DDR5. Тянет любую игру в 4K.',
-    price: '189 900 ₽',
-    link: 'https://example.com',
-    image: 'https://images.unsplash.com/photo-1587202372775-e229f172b9d7?w=900&q=80',
-  },
-  {
-    id: 2,
-    author: 'NOVA Team',
-    title: 'NOVA Stealth Mini',
-    description: 'Компактная сборка для работы и стримов. Тихая, мощная, в стильном корпусе.',
-    price: '94 500 ₽',
-    link: 'https://example.com',
-    image: 'https://images.unsplash.com/photo-1591488320449-011701bb6704?w=900&q=80',
-  },
-];
-
-const initialReviews: Review[] = [
-  { id: 1, author: 'Алексей', text: 'Собрали ПК за 3 дня, всё работает идеально. Кабель-менеджмент — космос!', rating: 5 },
-  { id: 2, author: 'Марина', text: 'Помогли с выбором комплектующих под мой бюджет. Очень довольна.', rating: 5 },
-];
 
 const NAV: { id: Tab; label: string; icon: string; auth?: boolean }[] = [
   { id: 'home', label: 'Главная', icon: 'House' },
@@ -70,21 +21,37 @@ const NAV: { id: Tab; label: string; icon: string; auth?: boolean }[] = [
   { id: 'settings', label: 'Настройки', icon: 'Settings' },
 ];
 
-let uidCounter = 1;
-
 export default function Index() {
-  const [theme, setTheme] = useState<'dark' | 'light'>('dark');
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => (localStorage.getItem('novapc_theme') as 'dark' | 'light') || 'dark');
   const [tab, setTab] = useState<Tab>('home');
   const [user, setUser] = useState<User | null>(null);
   const [authOpen, setAuthOpen] = useState(false);
   const [authMode, setAuthMode] = useState<'login' | 'register'>('register');
 
-  const [posts, setPosts] = useState<Post[]>(initialPosts);
-  const [reviews, setReviews] = useState<Review[]>(initialReviews);
+  const [posts, setPosts] = useState<Post[]>([]);
+  const [reviews, setReviews] = useState<Review[]>([]);
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', theme === 'dark');
+    localStorage.setItem('novapc_theme', theme);
   }, [theme]);
+
+  const loadFeed = useCallback(async () => {
+    try {
+      const [p, r] = await Promise.all([api.getPosts(), api.getReviews()]);
+      setPosts(p.posts);
+      setReviews(r.reviews);
+    } catch (e) {
+      // тихо
+    }
+  }, []);
+
+  useEffect(() => {
+    loadFeed();
+    if (getToken()) {
+      api.me().then((d) => setUser(d.user)).catch(() => clearToken());
+    }
+  }, [loadFeed]);
 
   const requireAuth = (action: () => void) => {
     if (user) action();
@@ -103,12 +70,12 @@ export default function Index() {
 
       <header className="sticky top-0 z-40 border-b border-border bg-background/80 backdrop-blur-xl">
         <div className="container flex items-center justify-between h-16">
-          <div className="flex items-center gap-2">
+          <button onClick={() => setTab('home')} className="flex items-center gap-2">
             <div className="w-9 h-9 rounded-lg bg-primary flex items-center justify-center glow-cyan">
               <Icon name="Cpu" className="text-primary-foreground" size={20} />
             </div>
             <span className="font-display font-bold text-lg tracking-tight">NOVA<span className="text-primary">PC</span></span>
-          </div>
+          </button>
 
           <nav className="hidden md:flex items-center gap-1">
             {NAV.map((n) => (
@@ -148,20 +115,47 @@ export default function Index() {
             canPost={canPost}
             user={user}
             onRequireAuth={() => requireAuth(() => {})}
-            onAddPost={(p) => setPosts([{ ...p, id: Date.now(), author: user!.name }, ...posts])}
+            onAddPost={async (p) => {
+              try {
+                const res = await api.addPost(p);
+                setPosts([res.post, ...posts]);
+                toast.success('Пост опубликован');
+              } catch (e) {
+                toast.error((e as Error).message);
+              }
+            }}
             onBuy={() => requireAuth(() => {})}
           />
         )}
         {tab === 'reviews' && (
           <Reviews
             reviews={reviews}
-            onAdd={(text, rating) => requireAuth(() => {
-              setReviews([{ id: Date.now(), author: user!.name, text, rating }, ...reviews]);
-              toast.success('Отзыв опубликован');
+            onAdd={(text, rating) => requireAuth(async () => {
+              try {
+                const res = await api.addReview(text, rating);
+                setReviews([res.review, ...reviews]);
+                toast.success('Отзыв опубликован');
+              } catch (e) {
+                toast.error((e as Error).message);
+              }
             })}
           />
         )}
-        {tab === 'cabinet' && user && <Cabinet user={user} onSave={(u) => { setUser(u); toast.success('Профиль обновлён'); }} onLogout={() => { setUser(null); setTab('home'); }} />}
+        {tab === 'cabinet' && user && (
+          <Cabinet
+            user={user}
+            onSave={async (name, email) => {
+              try {
+                const res = await api.updateProfile(name, email);
+                setUser(res.user);
+                toast.success('Профиль обновлён');
+              } catch (e) {
+                toast.error((e as Error).message);
+              }
+            }}
+            onLogout={() => { clearToken(); setUser(null); setTab('home'); }}
+          />
+        )}
         {tab === 'settings' && <Settings theme={theme} setTheme={setTheme} />}
       </main>
 
@@ -183,7 +177,7 @@ export default function Index() {
           mode={authMode}
           setMode={setAuthMode}
           onClose={() => setAuthOpen(false)}
-          onAuth={(u) => { setUser(u); setAuthOpen(false); setTab('cabinet'); toast.success(`Добро пожаловать, ${u.name}!`); }}
+          onAuth={(token, u) => { setToken(token); setUser(u); setAuthOpen(false); setTab('cabinet'); toast.success(`Добро пожаловать, ${u.name}!`); }}
         />
       )}
     </div>
@@ -242,7 +236,6 @@ function Feed({ posts, canPost, user, onAddPost, onBuy, onRequireAuth }: {
     onAddPost(form);
     setForm({ title: '', description: '', price: '', link: '', image: '' });
     setOpen(false);
-    toast.success('Пост опубликован');
   };
 
   return (
@@ -274,28 +267,32 @@ function Feed({ posts, canPost, user, onAddPost, onBuy, onRequireAuth }: {
         </Card>
       )}
 
-      <div className="grid sm:grid-cols-2 gap-5">
-        {posts.map((p) => (
-          <Card key={p.id} className="overflow-hidden group hover:border-primary/50 transition-colors">
-            <div className="aspect-video overflow-hidden bg-secondary">
-              {p.image && <img src={p.image} alt={p.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />}
-            </div>
-            <div className="p-5 space-y-3">
-              <div className="flex items-center justify-between">
-                <h3 className="font-display font-bold text-lg">{p.title}</h3>
-                <Badge variant="outline" className="text-xs">{p.author}</Badge>
+      {posts.length === 0 ? (
+        <Card className="p-10 text-center text-muted-foreground">Пока нет ни одной сборки</Card>
+      ) : (
+        <div className="grid sm:grid-cols-2 gap-5">
+          {posts.map((p) => (
+            <Card key={p.id} className="overflow-hidden group hover:border-primary/50 transition-colors">
+              <div className="aspect-video overflow-hidden bg-secondary">
+                {p.image && <img src={p.image} alt={p.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />}
               </div>
-              <p className="text-sm text-muted-foreground line-clamp-2">{p.description}</p>
-              <div className="flex items-center justify-between pt-2">
-                <span className="font-display text-xl font-bold text-primary">{p.price}</span>
-                <Button size="sm" onClick={() => (user ? window.open(p.link, '_blank') : onBuy())}>
-                  <Icon name="ShoppingCart" size={14} className="mr-1.5" />Купить
-                </Button>
+              <div className="p-5 space-y-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="font-display font-bold text-lg">{p.title}</h3>
+                  <Badge variant="outline" className="text-xs">{p.author}</Badge>
+                </div>
+                <p className="text-sm text-muted-foreground line-clamp-2">{p.description}</p>
+                <div className="flex items-center justify-between pt-2">
+                  <span className="font-display text-xl font-bold text-primary">{p.price}</span>
+                  <Button size="sm" onClick={() => (user ? window.open(p.link, '_blank') : onBuy())}>
+                    <Icon name="ShoppingCart" size={14} className="mr-1.5" />Купить
+                  </Button>
+                </div>
               </div>
-            </div>
-          </Card>
-        ))}
-      </div>
+            </Card>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -327,7 +324,9 @@ function Reviews({ reviews, onAdd }: { reviews: Review[]; onAdd: (text: string, 
       </Card>
 
       <div className="space-y-4">
-        {reviews.map((r) => (
+        {reviews.length === 0 ? (
+          <Card className="p-10 text-center text-muted-foreground">Отзывов пока нет — будьте первым!</Card>
+        ) : reviews.map((r) => (
           <Card key={r.id} className="p-5 animate-fade-in">
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center gap-2">
@@ -346,7 +345,7 @@ function Reviews({ reviews, onAdd }: { reviews: Review[]; onAdd: (text: string, 
   );
 }
 
-function Cabinet({ user, onSave, onLogout }: { user: User; onSave: (u: User) => void; onLogout: () => void }) {
+function Cabinet({ user, onSave, onLogout }: { user: User; onSave: (name: string, email: string) => void; onLogout: () => void }) {
   const [name, setName] = useState(user.name);
   const [email, setEmail] = useState(user.email);
 
@@ -389,7 +388,7 @@ function Cabinet({ user, onSave, onLogout }: { user: User; onSave: (u: User) => 
             <Label>Почта</Label>
             <Input value={email} onChange={(e) => setEmail(e.target.value)} />
           </div>
-          <Button onClick={() => onSave({ ...user, name, email })} className="w-full">Сохранить изменения</Button>
+          <Button onClick={() => onSave(name, email)} className="w-full">Сохранить изменения</Button>
         </div>
       </Card>
 
@@ -447,23 +446,29 @@ function Settings({ theme, setTheme }: { theme: 'dark' | 'light'; setTheme: (t: 
 
 function AuthModal({ mode, setMode, onClose, onAuth }: {
   mode: 'login' | 'register'; setMode: (m: 'login' | 'register') => void;
-  onClose: () => void; onAuth: (u: User) => void;
+  onClose: () => void; onAuth: (token: string, u: User) => void;
 }) {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [loading, setLoading] = useState(false);
 
-  const submit = () => {
+  const submit = async () => {
     if (!email || !password || (mode === 'register' && !name)) {
       toast.error('Заполните все поля');
       return;
     }
-    onAuth({
-      uid: uidCounter++,
-      name: mode === 'register' ? name : email.split('@')[0],
-      email,
-      registeredAt: new Date().toLocaleDateString('ru-RU'),
-    });
+    setLoading(true);
+    try {
+      const res = mode === 'register'
+        ? await api.register(name, email, password)
+        : await api.login(email, password);
+      onAuth(res.token, res.user);
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -504,12 +509,12 @@ function AuthModal({ mode, setMode, onClose, onAuth }: {
           </div>
           <div className="space-y-1.5">
             <Label>Пароль</Label>
-            <Input type="password" placeholder="••••••••" value={password} onChange={(e) => setPassword(e.target.value)} />
+            <Input type="password" placeholder="••••••••" value={password} onChange={(e) => setPassword(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && submit()} />
           </div>
         </div>
 
-        <Button onClick={submit} className="w-full">
-          {mode === 'register' ? 'Создать аккаунт' : 'Войти'}
+        <Button onClick={submit} className="w-full" disabled={loading}>
+          {loading ? 'Загрузка...' : mode === 'register' ? 'Создать аккаунт' : 'Войти'}
         </Button>
       </Card>
     </div>

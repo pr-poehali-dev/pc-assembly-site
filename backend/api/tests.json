@@ -1,0 +1,38 @@
+{
+  "tests": [
+    {
+      "name": "Get posts list",
+      "method": "GET",
+      "path": "/?action=posts",
+      "expectedStatus": 200,
+      "expectedBody": {"posts": []},
+      "bodyMatcher": "partial"
+    },
+    {
+      "name": "Get reviews list",
+      "method": "GET",
+      "path": "/?action=reviews",
+      "expectedStatus": 200,
+      "expectedBody": {"reviews": []},
+      "bodyMatcher": "partial"
+    },
+    {
+      "name": "Register validation fails on empty",
+      "method": "POST",
+      "path": "/?action=register",
+      "body": {"name": "", "email": "", "password": ""},
+      "expectedStatus": 400,
+      "expectedBody": {"error": "string"},
+      "bodyMatcher": "partial"
+    },
+    {
+      "name": "Login wrong creds",
+      "method": "POST",
+      "path": "/?action=login",
+      "body": {"email": "nouser@test.com", "password": "wrong"},
+      "expectedStatus": 401,
+      "expectedBody": {"error": "string"},
+      "bodyMatcher": "partial"
+    }
+  ]
+}
